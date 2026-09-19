@@ -1,19 +1,26 @@
 import requests
 
+from ans_verify import verify_agent, ANSVerificationError
 from config import PARTNER_AGENT_URL
 
 
 def ask_partner_agent(message: str):
     payload = {"message": message}
 
+    # ANS identity check BEFORE sending anything
+    try:
+        identity = verify_agent(PARTNER_AGENT_URL)
+    except ANSVerificationError as e:
+        return {"error": "REFUSED", "reason": str(e)}
+
     try:
         response = requests.post(
             PARTNER_AGENT_URL,
             json=payload,
-            timeout=30,  # was 10
+            timeout=30,
         )
         response.raise_for_status()
-        return response.json()
+        return {"verified_identity": identity, "result": response.json()}
     except requests.RequestException as e:
         return {"error": f"Partner agent unreachable or failed: {e}"}
 

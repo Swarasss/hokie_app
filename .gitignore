@@ -219,3 +219,16 @@ __marimo__/
 
 
 .env
+
+certs/
+*.key
+
+
+read -s -p "GoDaddy key: " GD_KEY; echo
+read -s -p "GoDaddy secret: " GD_SECRET; echo
+export ANS_BASE_URL="https://api.godaddy.com/"
+export ANS_API_KEY="$GD_KEY:$GD_SECRET"
+unset GD_KEY GD_SECRETcerts/
+*.key
+certs/
+*.key
