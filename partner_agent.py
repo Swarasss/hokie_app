@@ -35,7 +35,7 @@ PUBLIC_URL = os.getenv("PUBLIC_URL", "http://localhost:8001")
 @app.get("/.well-known/agent-card.json")
 def agent_card():
     return {
-        "name": "Task Supporting Agent",
+        "name": "Seller Agent",
         "description": "Independent AI service agent powered by Gemini",
         "url": PUBLIC_URL,
         "version": "1.0.0",
