@@ -8,7 +8,7 @@ from google import genai
 
 load_dotenv()
 
-app = FastAPI(title="Partner Agent")
+app = FastAPI(title="Seller Agent")
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
 
@@ -19,7 +19,7 @@ class AgentRequest(BaseModel):
 
 @app.get("/")
 def root():
-    return {"agent": "Partner Agent", "status": "running"}
+    return {"agent": "Seller Agent", "status": "running"}
 
 
 MODELS = [
@@ -55,7 +55,7 @@ def agent_card():
 def ask_agent(request: AgentRequest):
     last_error = None
     prompt = (
-        "You are Partner Agent, an independent AI service agent. "
+        "You are Seller Agent, an independent AI service agent. "
         "Answer clearly and briefly.\n\n"
         f"User request: {request.message}"
     )
@@ -65,7 +65,7 @@ def ask_agent(request: AgentRequest):
             try:
                 response = client.models.generate_content(model=model, contents=prompt)
                 return {
-                    "agent": "Partner Agent",
+                    "agent": "Seller Agent",
                     "model": model,
                     "response": response.text,
                 }
