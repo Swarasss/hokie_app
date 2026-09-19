@@ -1,7 +1,16 @@
-from fastapi import FastAPI
+import os
+import time
+
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from google import genai
+
+load_dotenv()
 
 app = FastAPI(title="Partner Agent")
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
 
 
 class AgentRequest(BaseModel):
@@ -10,19 +19,63 @@ class AgentRequest(BaseModel):
 
 @app.get("/")
 def root():
-    return {
-        "agent": "Partner Agent",
-        "status": "running"
-    }
+    return {"agent": "Partner Agent", "status": "running"}
 
+
+MODELS = [
+    os.getenv("GEMINI_MODEL", "gemini-3.5-flash"),
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite",
+]
+
+
+PUBLIC_URL = os.getenv("PUBLIC_URL", "http://localhost:8001")
+
+
+@app.get("/.well-known/agent-card.json")
+def agent_card():
+    return {
+        "name": "Task Supporting Agent",
+        "description": "Independent AI service agent powered by Gemini",
+        "url": PUBLIC_URL,
+        "version": "1.0.0",
+        "capabilities": {"streaming": False},
+        "defaultInputModes": ["text"],
+        "defaultOutputModes": ["text"],
+        "skills": [
+            {
+                "id": "ask",
+                "name": "Answer questions",
+                "description": "Answers short questions from other agents",
+            }
+        ],
+    }
 
 @app.post("/ask")
 def ask_agent(request: AgentRequest):
-    user_message = request.message
+    last_error = None
+    prompt = (
+        "You are Partner Agent, an independent AI service agent. "
+        "Answer clearly and briefly.\n\n"
+        f"User request: {request.message}"
+    )
 
-    response_message = f"Partner Agent received: {user_message}"
+    for model in MODELS:
+        for attempt in range(3):
+            try:
+                response = client.models.generate_content(model=model, contents=prompt)
+                return {
+                    "agent": "Partner Agent",
+                    "model": model,
+                    "response": response.text,
+                }
+            except Exception as e:
+                last_error = e
+                print(f"{model} attempt {attempt + 1} failed: {e}")
+                # Only worth retrying on capacity/rate errors
+                if "503" in str(e) or "429" in str(e):
+                    time.sleep(2 ** attempt)
+                else:
+                    break  # bad model name, auth, etc: move to next model
 
-    return {
-        "agent": "Partner Agent",
-        "response": response_message
-    }
+    raise HTTPException(status_code=503, detail=f"All models unavailable: {last_error}")
