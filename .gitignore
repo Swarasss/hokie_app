@@ -232,3 +232,4 @@ unset GD_KEY GD_SECRETcerts/
 *.key
 certs/
 *.key
+certs-v1.0.1
