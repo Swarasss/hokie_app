@@ -123,16 +123,43 @@ def api_attacks():
 def ask_buyer_agent(request: BuyerRequest):
     if request.target not in TARGETS:
         raise HTTPException(status_code=400, detail="Unknown target")
-    if rate_limited():
-        raise HTTPException(status_code=429, detail="Too many requests, wait a minute.")
-    seller_url = TARGETS[request.target]
 
-    calls = []  # raw evidence of what the seller tool returned
+    if rate_limited():
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests, wait a minute."
+        )
+
+    calls = []  # raw evidence from the Seller tool
 
     def ask_seller(question: str) -> dict:
-        """Ask the Seller Agent a question. The Seller's ANS identity is verified first; if verification fails the request is refused and nothing is sent."""
-        result = ask_partner_agent(question, url=seller_url)
-        calls.append({"question": question, "result": result})
+        """
+        Ask the Seller Agent.
+
+        Verified seller:
+        ANS resolve -> verify -> A2A
+
+        Lookalike:
+        verify supplied fake endpoint -> REFUSED
+        """
+
+        if request.target == "seller":
+            # Normal verified path:
+            # ANS resolves Seller v1.0.1 to the registered A2A endpoint
+            result = ask_partner_agent(question)
+
+        else:
+            # Explicit attack / lookalike path
+            result = ask_partner_agent(
+                question,
+                url=LOOKALIKE_URL
+            )
+
+        calls.append({
+            "question": question,
+            "result": result
+        })
+
         return result
 
     config = types.GenerateContentConfig(
@@ -141,12 +168,21 @@ def ask_buyer_agent(request: BuyerRequest):
     )
 
     last_error = None
+
     for model in MODELS:
         for attempt in range(3):
             try:
                 calls.clear()
-                chat = client.chats.create(model=model, config=config)
-                response = chat.send_message(request.message)
+
+                chat = client.chats.create(
+                    model=model,
+                    config=config
+                )
+
+                response = chat.send_message(
+                    request.message
+                )
+
                 return {
                     "agent": "Buyer Agent",
                     "model": model,
@@ -155,12 +191,20 @@ def ask_buyer_agent(request: BuyerRequest):
                     "response": response.text or "",
                     "seller_calls": list(calls),
                 }
+
             except Exception as e:
                 last_error = e
-                print(f"{model} attempt {attempt + 1} failed: {e}")
+
+                print(
+                    f"{model} attempt {attempt + 1} failed: {e}"
+                )
+
                 if "503" in str(e) or "429" in str(e):
                     time.sleep(2 ** attempt)
                 else:
                     break
 
-    raise HTTPException(status_code=503, detail=f"Gemini unavailable: {last_error}")
+    raise HTTPException(
+        status_code=503,
+        detail=f"Gemini unavailable: {last_error}"
+    )
