@@ -10,14 +10,29 @@ from config import PARTNER_AGENT_URL
 
 
 def ask_partner_agent(message: str, url: str | None = None):
-    payload = {"message": message}
+    payload = {
+    "jsonrpc": "2.0",
+    "id": "buyer-1",
+    "method": "SendMessage",
+    "params": {
+        "message": {
+            "messageId": "buyer-msg-1",
+            "role": "ROLE_USER",
+            "parts": [
+                {
+                    "text": message
+                }
+            ]
+        }
+    }
+}
 
     try:
         if url is None:
             # Normal path: discover/resolve real Seller through ANS
             resolved = resolve_ans_agent(
                 "seller.domainguard.us",
-                "1.0.0"
+                "1.0.1"
             )
             target = resolved["endpoint"]
         else:
@@ -39,6 +54,10 @@ def ask_partner_agent(message: str, url: str | None = None):
         response = requests.post(
             target,
             json=payload,
+            headers={
+        "Content-Type": "application/json",
+        "A2A-Version": "1.0",
+         },
             timeout=60
         )
         response.raise_for_status()
