@@ -14,6 +14,86 @@ _cache: dict = {}
 class ANSVerificationError(Exception):
     """The peer agent failed ANS verification. Do not call it."""
 
+import os
+
+
+ANS_BASE_URL = os.getenv("ANS_BASE_URL", "https://api.godaddy.com")
+ANS_API_KEY = os.getenv("ANS_API_KEY")
+
+
+def resolve_ans_agent(host: str, version: str = "1.0.0") -> dict:
+    """Resolve an ANS-registered agent to its registered endpoint."""
+
+    if not ANS_API_KEY:
+        raise ANSVerificationError("ANS_API_KEY is not configured")
+
+    response = requests.post(
+        f"{ANS_BASE_URL}/v1/agents/resolution",
+        headers={
+            "Authorization": f"sso-key {ANS_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "agentHost": host,
+            "version": version,
+        },
+        timeout=10,
+    )
+
+    if response.status_code != 200:
+        raise ANSVerificationError(
+            f"ANS resolution failed with HTTP {response.status_code}"
+        )
+
+    resolution = response.json()
+
+    details_url = None
+
+    for link in resolution.get("links", []):
+        if link.get("rel") == "agent-details":
+            details_url = link.get("href")
+            break
+
+    if not details_url:
+        raise ANSVerificationError("ANS resolution returned no agent-details link")
+
+    details_response = requests.get(
+        details_url,
+        headers={"Authorization": f"sso-key {ANS_API_KEY}"},
+        timeout=10,
+    )
+
+    if details_response.status_code != 200:
+        raise ANSVerificationError(
+            f"Could not retrieve ANS agent details: HTTP {details_response.status_code}"
+        )
+
+    details = details_response.json()
+
+    if details.get("agentStatus") != "ACTIVE":
+        raise ANSVerificationError(
+            f"Resolved agent status is {details.get('agentStatus')}, not ACTIVE"
+        )
+
+    endpoints = details.get("endpoints", [])
+
+    if not endpoints:
+        raise ANSVerificationError("Resolved agent has no registered endpoint")
+
+    endpoint = endpoints[0].get("agentUrl")
+
+    if not endpoint:
+        raise ANSVerificationError("Resolved endpoint is missing its URL")
+
+    return {
+        "ans_name": resolution.get("ansName"),
+        "agent_id": details.get("agentId"),
+        "host": details.get("agentHost"),
+        "endpoint": endpoint,
+        "protocol": endpoints[0].get("protocol"),
+        "status": details.get("agentStatus"),
+    }
+
 
 def _parse_txt(value: str) -> dict:
     fields = {}
