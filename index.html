@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Buyer Agent · ANS-verified agent-to-agent</title>
+<style>
+  :root { --bg:#0a1214; --card:#12201f; --line:#1f3533; --txt:#e8f1ef; --mut:#8fa5a1; --ok:#2dd4bf; --bad:#f87171; --warn:#fbbf24; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font:16px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  header { padding:28px 32px 4px; }
+  h1 { margin:0; font-size:28px; }
+  .sub { color:var(--ok); margin-top:4px; }
+  main { display:grid; grid-template-columns:1.2fr 1fr; gap:20px; padding:20px 32px 40px; }
+  @media (max-width:900px) { main { grid-template-columns:1fr; padding:16px; } header { padding:20px 16px 0; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:20px; margin-bottom:20px; }
+  h2 { margin:0 0 12px; font-size:18px; }
+  .mut { color:var(--mut); font-size:14px; }
+  label.opt { display:block; padding:10px 12px; border:1px solid var(--line); border-radius:10px; margin-bottom:8px; cursor:pointer; }
+  label.opt:has(input:checked) { border-color:var(--ok); background:#0f2b28; }
+  label.opt small { display:block; color:var(--mut); }
+  textarea { width:100%; min-height:72px; padding:10px 12px; border-radius:10px; border:1px solid var(--line); background:#0d1a19; color:var(--txt); font:inherit; resize:vertical; }
+  button { background:var(--ok); color:#04211d; border:0; border-radius:10px; padding:10px 18px; font:inherit; font-weight:600; cursor:pointer; margin-top:10px; }
+  button:disabled { opacity:.5; cursor:wait; }
+  .box { border-radius:12px; padding:14px 16px; margin-top:14px; border:1px solid; }
+  .box.ok { border-color:var(--ok); background:#0c2a26; }
+  .box.bad { border-color:var(--bad); background:#2a1212; }
+  .box.warn { border-color:var(--warn); background:#2a2210; }
+  .kv { display:grid; grid-template-columns:110px 1fr; gap:4px 12px; margin-top:8px; font-size:14px; }
+  .kv span { color:var(--mut); }
+  code { font:13px ui-monospace,Menlo,Consolas,monospace; word-break:break-all; }
+  #answer { white-space:pre-wrap; margin-top:14px; }
+  .row { display:flex; gap:12px; padding:10px 0; border-top:1px solid var(--line); }
+  .pill { flex:none; height:24px; padding:0 10px; border-radius:99px; font-size:12px; font-weight:700; line-height:24px; }
+  .pill.ok { background:#0c2a26; color:var(--ok); border:1px solid var(--ok); }
+  .pill.bad { background:#2a1212; color:var(--bad); border:1px solid var(--bad); }
+  .score { font-size:26px; font-weight:700; color:var(--ok); margin-bottom:6px; }
+  ol { margin:0; padding-left:20px; color:var(--mut); }
+  ol b { color:var(--txt); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Buyer Agent</h1>
+  <div class="sub">Agents that prove who they're talking to, before they talk.</div>
+</header>
+<main>
+  <section>
+    <div class="card">
+      <h2>1 · Ask a seller</h2>
+      <label class="opt"><input type="radio" name="target" value="seller" checked>
+        Verified seller <small>seller.domainguard.us · registered and ACTIVE in ANS</small></label>
+      <label class="opt"><input type="radio" name="target" value="lookalike">
+        Lookalike seller <small>seller-agent.onrender.com · same server, no ANS registration</small></label>
+      <textarea id="msg">Ask the seller what it can help a buyer with.</textarea>
+      <button id="send" onclick="send()">Send</button>
+      <div id="state" class="mut" style="margin-top:10px"></div>
+      <div id="identity"></div>
+      <div id="answer"></div>
+    </div>
+    <div class="card">
+      <h2>How the Buyer decides</h2>
+      <ol>
+        <li><b>Resolve</b> the seller's <code>_ans-badge</code> DNS record (only the domain owner can publish it).</li>
+        <li><b>Fetch</b> its entry from the GoDaddy ANS transparency log, and refuse any other log.</li>
+        <li><b>Check</b> status is ACTIVE, host and agent ID match, not expired, and the endpoint is the registered one.</li>
+        <li><b>Only then</b> send the request. Any failure means refuse.</li>
+      </ol>
+    </div>
+  </section>
+  <section>
+    <div class="card">
+      <h2>2 · Attack battery</h2>
+      <div class="mut">Ten attacks against the Buyer's verification: fake domains, swapped endpoints, revoked and expired agents, tampered log data. Every one must be BLOCKED.</div>
+      <button id="bat" onclick="runBattery()">Run attack battery</button>
+      <div id="battery" style="margin-top:14px"></div>
+    </div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+async function send() {
+  const message = $("msg").value.trim();
+  if (!message) return;
+  const target = document.querySelector("input[name=target]:checked").value;
+  $("send").disabled = true;
+  $("identity").innerHTML = "";
+  $("answer").textContent = "";
+  $("state").textContent = "Verifying the seller's identity, then asking… (the first request can take up to a minute while free servers wake up)";
+  try {
+    const r = await fetch("/ask", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message, target }) });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || r.statusText);
+    render(data);
+    $("state").textContent = "";
+  } catch (e) {
+    $("state").textContent = "Error: " + e.message;
+  } finally {
+    $("send").disabled = false;
+  }
+}
+
+function render(data) {
+  $("answer").textContent = data.response || "";
+  const call = (data.seller_calls || [])[0];
+  if (!call) {
+    $("identity").innerHTML = '<div class="box warn">The Buyer did not contact the seller for this message.</div>';
+    return;
+  }
+  const res = call.result || {};
+  if (res.error === "REFUSED") {
+    $("identity").innerHTML = `<div class="box bad"><b>REFUSED. Nothing was sent to this seller.</b>
+      <div class="kv"><span>Target</span><code>${esc(res.target)}</code><span>Reason</span><code>${esc(res.reason)}</code></div></div>`;
+  } else if (res.verified_identity) {
+    const v = res.verified_identity;
+    $("identity").innerHTML = `<div class="box ok"><b>Seller verified through ANS</b>
+      <div class="kv"><span>ANS name</span><code>${esc(v.ans_name)}</code>
+      <span>Agent ID</span><code>${esc(v.agent_id)}</code>
+      <span>Status</span><code>${esc(v.status)}</code>
+      <span>Identity cert</span><code>${esc(v.identity_cert_fingerprint)}</code>
+      <span>Expires</span><code>${esc(v.expires)}</code>
+      <span>Endpoint</span><code>${esc(res.target)}</code></div></div>`;
+  } else {
+    $("identity").innerHTML = `<div class="box warn"><b>The seller call failed</b><div class="kv"><span>Detail</span><code>${esc(res.error)}</code></div></div>`;
+  }
+}
+
+async function runBattery() {
+  $("bat").disabled = true;
+  $("battery").textContent = "Running…";
+  try {
+    const r = await fetch("/api/attacks");
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || r.statusText);
+    $("battery").innerHTML = `<div class="score">${data.blocked}/${data.total} blocked</div>` +
+      data.results.map(x => `<div class="row"><span class="pill ${x.verdict === "BLOCKED" ? "ok" : "bad"}">${esc(x.verdict)}</span>
+        <div><b>${esc(x.attack)}</b><div class="mut">${esc(x.detail)}</div></div></div>`).join("");
+  } catch (e) {
+    $("battery").textContent = "Error: " + e.message;
+  } finally {
+    $("bat").disabled = false;
+  }
+}
+</script>
+</body>
+</html>

@@ -36,18 +36,30 @@ def _lookup_txt(name: str, prefix: str) -> dict:
     raise ANSVerificationError(f"{name} has no {prefix} record")
 
 
-def verify_agent(endpoint_url: str) -> dict:
-    cached = _cache.get(endpoint_url)
-    if cached and time.time() - cached[0] < CACHE_TTL_SECONDS:
-        return cached[1]
+def _fetch_log_entry(log_url: str) -> dict:
+    resp = requests.get(log_url, timeout=10)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def verify_agent(endpoint_url: str, txt_lookup=None, fetch_entry=None) -> dict:
+    """Verify a peer agent. txt_lookup / fetch_entry can be injected for attack tests."""
+    injected = txt_lookup is not None or fetch_entry is not None
+    lookup = txt_lookup or _lookup_txt
+    fetch = fetch_entry or _fetch_log_entry
+
+    if not injected:
+        cached = _cache.get(endpoint_url)
+        if cached and time.time() - cached[0] < CACHE_TTL_SECONDS:
+            return cached[1]
 
     parsed = urlparse(endpoint_url)
     if parsed.scheme != "https" or not parsed.hostname:
         raise ANSVerificationError("Endpoint must be an https URL")
     host = parsed.hostname
 
-    # 1. Domain owner must have published an ANS badge record
-    badge = _lookup_txt(f"_ans-badge.{host}", "v=ans-badge1")
+    # 1. The domain owner must have published an ANS badge record
+    badge = lookup(f"_ans-badge.{host}", "v=ans-badge1")
     log_url = badge.get("url", "")
     log = urlparse(log_url)
     if log.scheme != "https" or log.hostname not in TRUSTED_LOG_HOSTS:
@@ -55,24 +67,23 @@ def verify_agent(endpoint_url: str) -> dict:
 
     # 2. Fetch the public transparency log entry
     try:
-        resp = requests.get(log_url, timeout=10)
-        resp.raise_for_status()
-        entry = resp.json()
+        entry = fetch(log_url)
     except Exception as e:
         raise ANSVerificationError(f"Could not fetch log entry ({type(e).__name__})")
+    if not isinstance(entry, dict):
+        raise ANSVerificationError("Log entry is malformed")
 
     if entry.get("status") != "ACTIVE":
         raise ANSVerificationError(f"Agent status is {entry.get('status')}, not ACTIVE")
 
     try:
         event = entry["payload"]["producer"]["event"]
-        attest = event["attestations"]
-        attested_ans = _parse_txt(attest["dnsRecordsProvisioned"][f"_ans.{host}"])
-        identity_fp = attest["identityCert"]["fingerprint"]
+        log_host = event["agent"]["host"]
         agent_id = event["ansId"]
         ans_name = event["ansName"]
         expires = event["expiresAt"]
-        log_host = event["agent"]["host"]
+        attest = event["attestations"]
+        identity_fp = attest["identityCert"]["fingerprint"]
     except (KeyError, TypeError):
         raise ANSVerificationError("Log entry is missing expected fields")
 
@@ -81,14 +92,21 @@ def verify_agent(endpoint_url: str) -> dict:
         raise ANSVerificationError(f"Log entry is for {log_host}, not {host}")
     if not log_url.rstrip("/").endswith(agent_id):
         raise ANSVerificationError("Badge URL does not match the agent ID")
-    expiry = datetime.fromisoformat(expires.replace("Z", "+00:00"))
+    try:
+        expiry = datetime.fromisoformat(expires.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        raise ANSVerificationError("Log entry has an invalid expiry")
     if expiry <= datetime.now(timezone.utc):
         raise ANSVerificationError("Agent registration has expired")
 
     # 4. Endpoint must match what was registered, in the log and in live DNS
+    try:
+        attested_ans = _parse_txt(attest["dnsRecordsProvisioned"][f"_ans.{host}"])
+    except (KeyError, TypeError):
+        raise ANSVerificationError("Log entry has no attested _ans record for this host")
     if attested_ans.get("url") != endpoint_url:
         raise ANSVerificationError("Endpoint differs from the registered endpoint")
-    live = _lookup_txt(f"_ans.{host}", "v=ans1")
+    live = lookup(f"_ans.{host}", "v=ans1")
     if live.get("url") != endpoint_url:
         raise ANSVerificationError("Live DNS endpoint differs from the registered endpoint")
 
@@ -99,5 +117,6 @@ def verify_agent(endpoint_url: str) -> dict:
         "identity_cert_fingerprint": identity_fp,
         "expires": expires,
     }
-    _cache[endpoint_url] = (time.time(), result)
+    if not injected:
+        _cache[endpoint_url] = (time.time(), result)
     return result
