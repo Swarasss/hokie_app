@@ -4,4 +4,5 @@ requests
 pydantic
 python-dotenv
 google-genai
+a2a-sdk[fastapi]
 dnspython
