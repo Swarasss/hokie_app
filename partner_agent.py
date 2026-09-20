@@ -36,6 +36,37 @@ MODELS = [
     "gemini-3.5-flash-lite",
 ]
 
+def generate_seller_response(message: str) -> str:
+    last_error = None
+
+    prompt = (
+        "You are Seller Agent, an independent AI service agent. "
+        "Answer clearly and briefly.\n\n"
+        f"User request: {message}"
+    )
+
+    for model in MODELS:
+        for attempt in range(3):
+            try:
+                response = client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                )
+
+                return response.text or ""
+
+            except Exception as e:
+                last_error = e
+                print(f"{model} attempt {attempt + 1} failed: {e}")
+
+                if "503" in str(e) or "429" in str(e):
+                    time.sleep(2 ** attempt)
+                else:
+                    break
+
+    raise RuntimeError(f"All models unavailable: {last_error}")
+
+
 
 PUBLIC_URL = os.getenv("PUBLIC_URL", "http://localhost:8001")
 
@@ -68,7 +99,7 @@ a2a_card = AgentCard(
 )
 
 a2a_handler = LegacyRequestHandler(
-    agent_executor=SellerAgentExecutor(),
+    agent_executor=SellerAgentExecutor(generate_seller_response),
     task_store=InMemoryTaskStore(),
     agent_card=a2a_card,
 )
@@ -108,29 +139,36 @@ def agent_card():
 
 @app.post("/ask")
 def ask_agent(request: AgentRequest):
-    last_error = None
-    prompt = (
-        "You are Seller Agent, an independent AI service agent. "
-        "Answer clearly and briefly.\n\n"
-        f"User request: {request.message}"
-    )
+    try:
+        response = generate_seller_response(request.message)
 
-    for model in MODELS:
-        for attempt in range(3):
-            try:
-                response = client.models.generate_content(model=model, contents=prompt)
-                return {
-                    "agent": "Seller Agent",
-                    "model": model,
-                    "response": response.text,
-                }
-            except Exception as e:
-                last_error = e
-                print(f"{model} attempt {attempt + 1} failed: {e}")
-                # Only worth retrying on capacity/rate errors
-                if "503" in str(e) or "429" in str(e):
-                    time.sleep(2 ** attempt)
-                else:
-                    break  # bad model name, auth, etc: move to next model
+        return {
+            "agent": "Seller Agent",
+            "response": response,
+        }
 
-    raise HTTPException(status_code=503, detail=f"All models unavailable: {last_error}")
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=str(e)
+        )
+
+    # for model in MODELS:
+    #     for attempt in range(3):
+    #         try:
+    #             response = client.models.generate_content(model=model, contents=prompt)
+    #             return {
+    #                 "agent": "Seller Agent",
+    #                 "model": model,
+    #                 "response": response.text,
+    #             }
+    #         except Exception as e:
+    #             last_error = e
+    #             print(f"{model} attempt {attempt + 1} failed: {e}")
+    #             # Only worth retrying on capacity/rate errors
+    #             if "503" in str(e) or "429" in str(e):
+    #                 time.sleep(2 ** attempt)
+    #             else:
+    #                 break  # bad model name, auth, etc: move to next model
+
+    # raise HTTPException(status_code=503, detail=f"All models unavailable: {last_error}")
